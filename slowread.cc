@@ -72,7 +72,9 @@ class slowsocket {
             fcntl(fd, F_SETFL, arg);  
 
             int ret = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &windowSize, sizeof(windowSize));
-            char* req = "GET /photo.jpg HTTP/1.1\r\n"
+            //char* req = "GET /photo.jpg HTTP/1.1\r\n"
+            //char* req = "GET /junkText.txt HTTP/1.1\r\n"
+            char* req = "GET /junkText_600kb.txt HTTP/1.1\r\n"
                         "HOST: localhost\r\n"
                         "Connection: keep-alive\r\n"
                         "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/535.2 (KHTML, like Gecko) Ubuntu/11.10 Chromium/15.0.874.106 Chrome/15.0.874.106 Safari/535.2\r\n"
@@ -90,7 +92,7 @@ class slowsocket {
                 if (connect(fd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
                     if (!retry) {
                         fprintf(stderr, "Failed to connect; Will try after 1 sec\n");
-                        sleep(1);
+                        usleep(100 * 1000);
                         retry = true;
                     }
                     else {
@@ -178,10 +180,17 @@ int main(int argc, char** argv) {
             numConnected++;
         }
 
+        bool isAtleastOneOpen = false;
         for (int i=0; i<numConnected; i++) {
             if (fds[i]->isConnected()) {
                 fds[i]->readData();
+                isAtleastOneOpen = true;
             }
+        }
+
+        // exit while loop if there are no open connections
+        if (!isAtleastOneOpen) {
+            break;
         }
     }
 
