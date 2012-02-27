@@ -31,6 +31,11 @@ class slowsocket {
         bool connectionEstablished;
     
     public:
+
+        static int pendingConns;
+        static int inService;
+        static int closedSocks;
+
         slowsocket(int windSize, char* host, int readInterval, int id) {
             this->windowSize = windSize;
             this->host = host;
@@ -51,7 +56,7 @@ class slowsocket {
             int portno = PORT;
 
             if (server == NULL) {
-                fprintf(stderr, "ERROR, no such host; Errno: %d; Detail: %s\n", h_errno, strerror(h_errno));
+                printf("ERROR, no such host; Errno: %d; Detail: %s\n", h_errno, strerror(h_errno));
                 return false;
             }
 
@@ -65,7 +70,7 @@ class slowsocket {
             fd = socket(AF_INET, SOCK_STREAM, 0);
 
             if (fd < 0) {
-                fprintf(stderr, "ERROR opening socket\n");
+                printf("ERROR opening socket\n");
                 return false;
             }
 
@@ -94,12 +99,12 @@ class slowsocket {
                 //usleep(10 * 1000);
                 if (connect(fd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
                     if (!retry) {
-                        //fprintf(stderr, "Failed to connect; Will try after 1 sec\n");
+                        //printf("Failed to connect; Will try after 1 sec\n");
                         //usleep(100 * 1000);
                         retry = true;
                     }
                     else {
-                        //fprintf(stderr, "Failed to connect on retry attempt\n");
+                        //printf("Failed to connect on retry attempt\n");
                         return false;
                     }
                 }
@@ -133,15 +138,18 @@ class slowsocket {
             if (((int)difftime(currentTime, lastRead)) > readInterval) {
                 //printf("Time since last read: %d\n", ((int)difftime(currentTime, lastRead)));
                 //printf("Gonna read from socket\n");
-                //int readBytes = recv(fd, readbuf, 1024*1024, 0); 
-                int readBytes = recv(fd, readbuf, 900, 0); 
+                int readBytes = recv(fd, readbuf, 1024*1024, 0); 
+                //int readBytes = recv(fd, readbuf, 900, 0); 
                 if (readBytes == 0) {
                     fprintf(stdout, "No more data available in the socket; Closing the connection\n");
                     closeSocket();
+                    slowsocket::closedSocks += 1;
+                    slowsocket::inService -= 1;
                 }
                 else {
                     printf("Connection %d read %d bytes\n", id, readBytes);
                 }
+
                 lastRead = time(NULL);
                 return true;
             }
@@ -156,6 +164,14 @@ class slowsocket {
         }
 };
 
+int slowsocket::pendingConns = 0;
+int slowsocket::inService = 0;
+int slowsocket::closedSocks = 0;
+
+void printStats(int timeSinceBeginning) {
+    fprintf(stderr, "%4d\t%4d\t%4d\t%4d\n", timeSinceBeginning, slowsocket::pendingConns, slowsocket::inService, slowsocket::closedSocks);
+}
+
 int main(int argc, char** argv) {
 
     printf("%s <hostname> <readinterval> <numconn> <testduration> <windsizeinKB> <rate>\n", argv[0]);
@@ -167,13 +183,27 @@ int main(int argc, char** argv) {
     int delayInConnecting = 1000000/atoi(argv[6]);
     int numConnected = 0;
     slowsocket** fds = new slowsocket*[numConnections];
+
+    slowsocket::pendingConns = numConnections;
+    slowsocket::inService = 0;
+    slowsocket::closedSocks = 0;
     
-    time_t startTime;
+    time_t startTime, lastReportTime;
     time(&startTime);
+    time(&lastReportTime);
+    time_t currentTime;
 
     while(true) {
+    
+        time(&currentTime);
 
-        if (((int)difftime(time(NULL), startTime)) > testDuration) {
+        // report the stats every second
+        if (((int)difftime(currentTime, lastReportTime)) >= 5) {
+            printStats(((int)difftime(lastReportTime, startTime)));
+            lastReportTime = currentTime;
+        }
+
+        if (((int)difftime(currentTime, startTime)) > testDuration) {
             printf("Test duration over; Exiting....\n");
             break;
         }
@@ -186,6 +216,8 @@ int main(int argc, char** argv) {
             }
             else {
                 printf("Successfully connected client: %d\n", numConnected+1);
+                slowsocket::inService += 1;
+                slowsocket::pendingConns -= 1;
                 numConnected++;
             }
         }
